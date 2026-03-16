@@ -5,7 +5,7 @@ from datetime import datetime
 
 # ============ CONFIGURAÇÃO ============
 ACCESS_TOKEN = "SEU_TOKEN_AQUI"  # ← COLE SEU TOKEN
-ACCOUNT_ID = "f8aad5c7-266c-408a-a711-cf407f1720e7"
+ACCOUNT_ID = "id aqui"
 HISTORICO_FILE = r"C:\frameio_integracao\scripts\historico_uploads.json"
 # ======================================
 
