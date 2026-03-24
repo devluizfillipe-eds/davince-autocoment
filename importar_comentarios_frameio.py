@@ -2,19 +2,16 @@ import requests
 import json
 import os
 import sys
-from tkinter import Tk, Listbox, Button, Scrollbar, END, Frame
-from datetime import datetime
 
 # ============ CONFIGURAÇÃO (EDITAR APENAS AQUI) ============
 ACCESS_TOKEN = "<YOUR_ACCESS_TOKEN>"
-FOLDER_ID = "<YOUR_FOLDER_ID>"  # pasta raiz do projeto
+ACCOUNT_ID = "<YOUR_ACCOUNT_ID>"
 # ============================================================
 
 # ============ CONEXÃO COM DAVINCI RESOLVE ============
 resolve = None
 project = None
 timeline = None
-modo_console = False
 
 print("=" * 60)
 print("🎬 IMPORTADOR DE COMENTÁRIOS FRAME.IO")
@@ -24,143 +21,89 @@ try:
     import DaVinciResolveScript as dvr_script
     resolve = dvr_script.scriptapp("Resolve")
 
-    if resolve:
-        print("✅ API do DaVinci encontrada")
-
-        project_manager = resolve.GetProjectManager()
-        if project_manager:
-            project = project_manager.GetCurrentProject()
-            if project:
-                print(f"✅ Projeto atual: {project.GetName()}")
-
-                timeline = project.GetCurrentTimeline()
-                if timeline:
-                    print(f"✅ Timeline ativa: {timeline.GetName()}")
-                    fps = timeline.GetSetting("timelineFrameRate")
-                    print(f"   Frame rate: {fps} fps")
-                else:
-                    print("❌ Nenhuma timeline ativa")
-                    print("   👉 Crie uma timeline ou clique em uma existente")
-                    modo_console = True
-            else:
-                print("❌ Nenhum projeto aberto")
-                print("   👉 Abra um projeto primeiro")
-                modo_console = True
-        else:
-            print("❌ Não foi possível acessar o Project Manager")
-            modo_console = True
-    else:
+    if not resolve:
         print("❌ Não foi possível conectar ao DaVinci Resolve")
         print("   👉 Verifique se o programa está aberto")
-        modo_console = True
+        sys.exit(1)
+
+    print("✅ API do DaVinci encontrada")
+
+    project_manager = resolve.GetProjectManager()
+    if not project_manager:
+        print("❌ Não foi possível acessar o Project Manager")
+        sys.exit(1)
+
+    project = project_manager.GetCurrentProject()
+    if not project:
+        print("❌ Nenhum projeto aberto")
+        print("   👉 Abra um projeto primeiro")
+        sys.exit(1)
+
+    print(f"✅ Projeto atual: {project.GetName()}")
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        print("❌ Nenhuma timeline ativa")
+        print("   👉 Crie uma timeline ou clique em uma existente")
+        sys.exit(1)
+
+    print(f"✅ Timeline ativa: {timeline.GetName()}")
+    fps = float(timeline.GetSetting("timelineFrameRate"))
+    print(f"   Frame rate: {fps} fps")
 
 except ImportError:
-    print("⚠️ Executando em modo independente (sem DaVinci)")
-    print("   Os comentários serão apenas exibidos no console")
-    modo_console = True
-
-if modo_console:
-    print("\n⚠️ MODO CONSOLE APENAS (sem conexão com DaVinci)")
-    print("   Os comentários serão exibidos aqui, mas não na timeline")
-else:
-    print("\n✅ Conectado ao DaVinci Resolve com sucesso!")
+    print("❌ Script deve ser executado dentro do DaVinci Resolve")
+    sys.exit(1)
 
 print("-" * 60)
 
-def buscar_videos_do_projeto():
-    """
-    Busca todos os vídeos do projeto atual diretamente da API do Frame.io
-    Não depende mais do histórico local
-    """
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}"
-    }
+# ============ LOCALIZAR ARQUIVO DE MAPEAMENTO ============
+def localizar_mapeamento():
+    """Procura o arquivo de mapeamento em locais conhecidos"""
     
-    url = f"https://api.frame.io/v4/accounts/{ACCOUNT_ID}/folders/{FOLDER_ID}/files"
+    # Possíveis locais
+    possiveis_locais = [
+        r"C:\frameio_integracao\scripts\mapeamento_videos.json",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "mapeamento_videos.json"),
+        os.path.join(os.path.expanduser("~"), "frameio_integracao", "scripts", "mapeamento_videos.json")
+    ]
     
-    print("📡 Buscando vídeos do projeto no Frame.io...")
+    for caminho in possiveis_locais:
+        if os.path.exists(caminho):
+            print(f"📁 Mapeamento encontrado: {caminho}")
+            return caminho
     
-    try:
-        r = requests.get(url, headers=headers)
-        if r.status_code == 200:
-            videos = r.json().get("data", [])
-            
-            if not videos:
-                print("📭 Nenhum vídeo encontrado no projeto.")
-                return {"uploads": [], "ultimo": None}
-            
-            # Converte para o formato esperado pelo script
-            uploads = []
-            for v in videos:
-                # Formata a data (yyyy-mm-dd)
-                data = v.get("created_at", "")[:10]
-                uploads.append({
-                    "file_id": v["id"],
-                    "nome": v["name"],
-                    "data": data
-                })
-            
-            # Ordena por data (mais recente primeiro)
-            uploads.sort(key=lambda x: x["data"], reverse=True)
-            
-            print(f"✅ {len(uploads)} vídeo(s) encontrado(s)")
-            return {"uploads": uploads, "ultimo": uploads[0]["file_id"] if uploads else None}
-        else:
-            print(f"❌ Erro ao buscar vídeos: {r.status_code}")
-            return {"uploads": [], "ultimo": None}
-            
-    except Exception as e:
-        print(f"❌ Erro na requisição: {e}")
-        return {"uploads": [], "ultimo": None}
+    print("❌ Arquivo de mapeamento não encontrado")
+    print("   👉 Execute o script de upload primeiro para gerar o mapeamento")
+    return None
 
-def escolher_video_ui(historico):
-    """Interface gráfica para escolher o vídeo (agora com dados da API)"""
-    if not historico["uploads"]:
-        print("📭 Nenhum vídeo encontrado no projeto.")
+# ============ IDENTIFICAR VÍDEO NA TIMELINE ============
+def obter_caminho_video_timeline():
+    """Obtém o caminho do arquivo de vídeo do primeiro clipe selecionado ou do primeiro clipe da timeline"""
+    
+    # Tenta obter clipes selecionados
+    clipes_selecionados = timeline.GetItemListInTrack("video", 1)
+    
+    if not clipes_selecionados:
+        print("❌ Nenhum clipe encontrado na timeline")
         return None
+    
+    # Pega o primeiro clipe (ou o primeiro selecionado)
+    clipe = clipes_selecionados[0]
+    
+    # Tenta obter o caminho do arquivo
+    caminho = clipe.GetProperty("File Path")
+    
+    if not caminho:
+        print("❌ Não foi possível obter o caminho do vídeo")
+        return None
+    
+    print(f"🎥 Vídeo identificado: {os.path.basename(caminho)}")
+    print(f"📁 Caminho: {caminho}")
+    
+    return caminho
 
-    uploads = historico["uploads"]
-
-    root = Tk()
-    root.title("Selecione o vídeo")
-    root.geometry("600x400")
-
-    scrollbar = Scrollbar(root)
-    scrollbar.pack(side="right", fill="y")
-
-    listbox = Listbox(root, yscrollcommand=scrollbar.set)
-    for up in uploads:
-        nome = up['nome']
-        data = up['data']
-        listbox.insert(END, f"{nome} - {data}")
-    listbox.pack(fill="both", expand=True, padx=10, pady=10)
-    scrollbar.config(command=listbox.yview)
-
-    # Seleciona o primeiro (mais recente) por padrão
-    listbox.select_set(0)
-
-    resultado = []
-
-    def confirmar():
-        selecao = listbox.curselection()
-        if selecao:
-            resultado.append(uploads[selecao[0]])
-        root.quit()
-        root.destroy()
-
-    def cancelar():
-        root.quit()
-        root.destroy()
-
-    btn_frame = Frame(root)
-    btn_frame.pack(pady=5)
-    Button(btn_frame, text="Selecionar", command=confirmar).pack(side="left", padx=5)
-    Button(btn_frame, text="Cancelar", command=cancelar).pack(side="left", padx=5)
-
-    root.mainloop()
-
-    return resultado[0] if resultado else None
-
+# ============ BUSCAR COMENTÁRIOS NO FRAME.IO ============
 def buscar_comentarios(file_id):
     """Busca comentários no Frame.io"""
     headers = {
@@ -169,7 +112,7 @@ def buscar_comentarios(file_id):
 
     url = f"https://api.frame.io/v4/accounts/{ACCOUNT_ID}/files/{file_id}/comments"
 
-    print(f"\n🔍 Buscando comentários...")
+    print(f"\n🔍 Buscando comentários para o vídeo...")
 
     try:
         r = requests.get(url, headers=headers)
@@ -178,42 +121,26 @@ def buscar_comentarios(file_id):
             if r.status_code == 404:
                 print("   Nenhum comentário encontrado para este vídeo")
             return []
-        return r.json().get("data", [])
+        comentarios = r.json().get("data", [])
+        print(f"✅ {len(comentarios)} comentário(s) encontrado(s)")
+        return comentarios
     except Exception as e:
         print(f"❌ Erro na requisição: {e}")
         return []
 
-def exibir_comentarios_console(comentarios):
-    """Exibe os comentários no console"""
-    if not comentarios:
-        print("\n📭 Nenhum comentário encontrado.")
-        return
-
-    print(f"\n📋 {len(comentarios)} comentário(s) encontrado(s):")
-    print("-" * 60)
-    for i, c in enumerate(comentarios, 1):
-        frames = c['timestamp']
-        segundos = frames / 24.0  # assume 24fps para exibição
-        print(f"{i}. Frame {frames} ({segundos:.2f}s) - {c['text']}")
-    print("-" * 60)
-
-def adicionar_marcadores(comentarios, tl):
+# ============ ADICIONAR MARCADORES NA TIMELINE ============
+def adicionar_marcadores(comentarios, timeline, fps):
     """Adiciona marcadores na timeline usando timestamps em FRAMES"""
     if not comentarios:
+        print("\n📭 Nenhum comentário para adicionar.")
         return
 
     try:
-        if tl is None:
-            print("❌ Timeline inválida")
-            return
-
-        fps = float(tl.GetSetting("timelineFrameRate"))
-        frame_inicial = int(tl.GetStartFrame())
-        frame_final = int(tl.GetEndFrame())
+        frame_inicial = int(timeline.GetStartFrame())
+        frame_final = int(timeline.GetEndFrame())
         duracao_frames = frame_final - frame_inicial
 
-        print(f"\n   Frame rate: {fps} fps")
-        print(f"   Frame inicial: {frame_inicial}")
+        print(f"\n   Frame inicial: {frame_inicial}")
         print(f"   Frame final: {frame_final}")
         print(f"   Duração do vídeo: {duracao_frames} frames")
 
@@ -222,24 +149,17 @@ def adicionar_marcadores(comentarios, tl):
 
         for i, comment in enumerate(comentarios, 1):
             try:
-                # O timestamp da API V4 está em FRAMES!
+                # Timestamp da API V4 está em FRAMES
                 timestamp_frames = comment.get('timestamp', 0)
                 texto = comment.get('text', 'Sem texto')
 
-                # O timestamp já é o frame desejado
-                frame_relativo = timestamp_frames
-
                 # Verifica se está dentro da duração
+                frame_relativo = timestamp_frames
                 if frame_relativo < 0:
                     frame_relativo = 0
-                    print(f"      Frame ajustado para início")
                 elif frame_relativo >= duracao_frames:
                     print(f"   ⚠️ Comentário {i}: frame {timestamp_frames} além da duração")
-                    print(f"      Colocando no último frame")
                     frame_relativo = duracao_frames - 1
-
-                # Frame absoluto (para referência)
-                frame_absoluto = frame_inicial + frame_relativo
 
                 # Define cor baseada no texto
                 texto_lower = texto.lower()
@@ -250,9 +170,8 @@ def adicionar_marcadores(comentarios, tl):
                 else:
                     cor = "Yellow"
 
-                # Nome fixo sem espaços para o marcador
-                nome_marcador = "FrameioComment"
-                resultado = tl.AddMarker(frame_relativo, cor, nome_marcador, texto, 1, "")
+                # Adiciona marcador
+                resultado = timeline.AddMarker(frame_relativo, cor, "FrameioComment", texto, 1, "")
 
                 if resultado:
                     adicionados += 1
@@ -270,34 +189,41 @@ def adicionar_marcadores(comentarios, tl):
             print(f"❌ {falhas} falha(s)")
 
     except Exception as e:
-        print(f"❌ Erro: {e}")
-        exibir_comentarios_console(comentarios)
+        print(f"❌ Erro ao adicionar marcadores: {e}")
 
 # ============ EXECUÇÃO PRINCIPAL ============
 
-# 1. Busca vídeos do projeto ATUAL via API (não usa histórico local)
-videos_projeto = buscar_videos_do_projeto()
+# 1. Localizar arquivo de mapeamento
+caminho_mapeamento = localizar_mapeamento()
+if not caminho_mapeamento:
+    sys.exit(1)
 
-# 2. Escolhe o vídeo na interface
-video = escolher_video_ui(videos_projeto)
+# 2. Carregar mapeamento
+with open(caminho_mapeamento, 'r') as f:
+    mapeamento = json.load(f)
 
-if not video:
-    print("❌ Nenhum vídeo selecionado")
-    sys.exit()
+# 3. Identificar vídeo na timeline
+caminho_video = obter_caminho_video_timeline()
+if not caminho_video:
+    print("\n❌ Não foi possível identificar o vídeo na timeline")
+    sys.exit(1)
 
-print(f"\n🎥 Vídeo: {video['nome']}")
-print(f"📌 File ID: {video['file_id']}")
+# 4. Buscar file_id no mapeamento
+if caminho_video not in mapeamento:
+    print(f"\n❌ Vídeo não encontrado no mapeamento")
+    print(f"   Execute o script de upload para este vídeo primeiro")
+    sys.exit(1)
 
-# 3. Busca comentários do vídeo selecionado
-comentarios = buscar_comentarios(video['file_id'])
+file_id = mapeamento[caminho_video]
+print(f"\n📌 File ID encontrado: {file_id}")
 
-# 4. Adiciona na timeline ou exibe no console
+# 5. Buscar comentários
+comentarios = buscar_comentarios(file_id)
+
+# 6. Adicionar marcadores
 if comentarios:
-    if not modo_console and timeline:
-        adicionar_marcadores(comentarios, timeline)
-    else:
-        exibir_comentarios_console(comentarios)
+    adicionar_marcadores(comentarios, timeline, fps)
 else:
-    print("\n📭 Nenhum comentário encontrado.")
+    print("\n📭 Nenhum comentário encontrado para este vídeo")
 
 print("\n✅ Script finalizado!")
