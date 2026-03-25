@@ -64,9 +64,16 @@ def localizar_mapeamento():
     # Possíveis locais
     possiveis_locais = [
         r"C:\frameio_integracao\scripts\mapeamento_videos.json",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "mapeamento_videos.json"),
         os.path.join(os.path.expanduser("~"), "frameio_integracao", "scripts", "mapeamento_videos.json")
     ]
+    
+    # Tenta obter o diretório do script por outros métodos
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        possiveis_locais.insert(1, os.path.join(script_dir, "mapeamento_videos.json"))
+    except NameError:
+        # __file__ não está definido no ambiente do DaVinci
+        pass
     
     for caminho in possiveis_locais:
         if os.path.exists(caminho):
@@ -81,15 +88,15 @@ def localizar_mapeamento():
 def obter_caminho_video_timeline():
     """Obtém o caminho do arquivo de vídeo do primeiro clipe selecionado ou do primeiro clipe da timeline"""
     
-    # Tenta obter clipes selecionados
-    clipes_selecionados = timeline.GetItemListInTrack("video", 1)
+    # Tenta obter clipes da primeira trilha de vídeo
+    clipes = timeline.GetItemListInTrack("video", 1)
     
-    if not clipes_selecionados:
+    if not clipes:
         print("❌ Nenhum clipe encontrado na timeline")
         return None
     
-    # Pega o primeiro clipe (ou o primeiro selecionado)
-    clipe = clipes_selecionados[0]
+    # Pega o primeiro clipe
+    clipe = clipes[0]
     
     # Tenta obter o caminho do arquivo
     caminho = clipe.GetProperty("File Path")
