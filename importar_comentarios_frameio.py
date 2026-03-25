@@ -86,7 +86,7 @@ def localizar_mapeamento():
 
 # ============ IDENTIFICAR VÍDEO NA TIMELINE ============
 def obter_caminho_video_timeline():
-    """Obtém o caminho do arquivo de vídeo do primeiro clipe selecionado ou do primeiro clipe da timeline"""
+    """Obtém o caminho do arquivo de vídeo do primeiro clipe da timeline"""
     
     # Tenta obter clipes da primeira trilha de vídeo
     clipes = timeline.GetItemListInTrack("video", 1)
@@ -98,17 +98,33 @@ def obter_caminho_video_timeline():
     # Pega o primeiro clipe
     clipe = clipes[0]
     
-    # Tenta obter o caminho do arquivo
+    # Tenta diferentes formas de obter o caminho
+    caminho = None
+    
+    # Método 1: File Path
     caminho = clipe.GetProperty("File Path")
+    if caminho:
+        print(f"🎥 Vídeo identificado: {os.path.basename(caminho)}")
+        print(f"📁 Caminho: {caminho}")
+        return caminho
     
-    if not caminho:
-        print("❌ Não foi possível obter o caminho do vídeo")
-        return None
+    # Método 2: Path
+    caminho = clipe.GetProperty("Path")
+    if caminho:
+        print(f"🎥 Vídeo identificado: {os.path.basename(caminho)}")
+        print(f"📁 Caminho: {caminho}")
+        return caminho
     
-    print(f"🎥 Vídeo identificado: {os.path.basename(caminho)}")
-    print(f"📁 Caminho: {caminho}")
+    # Método 3: Clip Name (apenas nome, não caminho completo)
+    nome = clipe.GetProperty("Clip Name")
+    if nome:
+        print(f"⚠️ Apenas o nome do clipe foi encontrado: {nome}")
+        print("   O script precisa do caminho completo do arquivo")
+        print("   Certifique-se de que o clipe é um arquivo de mídia local")
     
-    return caminho
+    print("❌ Não foi possível obter o caminho do vídeo")
+    print("   Verifique se o clipe é um arquivo de mídia (não um título ou gerador)")
+    return None
 
 # ============ BUSCAR COMENTÁRIOS NO FRAME.IO ============
 def buscar_comentarios(file_id):
